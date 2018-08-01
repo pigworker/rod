@@ -29,3 +29,12 @@ instance HalfZip Bwd where
 bwdBr :: String -> Bwd String -> String -> String
 bwdBr l B0 r = ""
 bwdBr l (sz :< s) r = l ++ foldMap (++ ",") sz ++ s ++ r
+
+(<><) :: Bwd x -> [x] -> Bwd x
+xz <>< [] = xz
+xz <>< (x : xs) = (xz :< x) <>< xs
+
+(<>>) :: Bwd x -> [x] -> [x]
+B0 <>> xs = xs
+(xz :< x) <>> xs = xz <>> (x : xs)
+
