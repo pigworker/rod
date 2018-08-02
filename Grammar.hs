@@ -116,6 +116,8 @@ spacer Sp = spacer (AtLeast 0)
 spacer sp = Parser $ \ env sta -> case (sp, source sta) of
   (_        , [])         -> [((), False, sta)]
   (Exactly 0, Spc _ : ts) -> []
+  (Exactly i, Newline : ts) -> []
+  (AtLeast _, Newline : Spc _ : ts) -> [((), True, sta{source = ts})]
   (Exactly i, Spc j : ts) -> if j == i then [((), True, sta{source = ts})] else []
   (AtLeast i, Spc j : ts) -> if j >= i then [((), True, sta{source = ts})] else []
   (Exactly 0, ts)         -> [((), False, sta)]

@@ -60,6 +60,8 @@ newline b (c : s) | c == (if b then '\r' else '\n') = newline b s
 newline b s = Newline : raw s
 
 spaces :: Int -> String -> [Token]
+spaces _ ('\n' : s) = newline True s
+spaces _ ('\r' : s) = newline False s
 spaces i (c : s) | elem c " \t" = spaces (i + 1) s
 spaces i s = Spc i : raw s
 
