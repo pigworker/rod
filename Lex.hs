@@ -10,11 +10,11 @@ tokens :: String -> [Token]
 tokens = findBrackets B0 . raw
 
 data Token
-  = Spc Int
+  = Spc Int      -- never two adjacent
   | Newline
-  | Id String
-  | Num Int
-  | Sym String
+  | Id String    -- never two adjacent
+  | Num Int      -- never two adjacent
+  | Sym String   -- two adjacent only if at least one is a solo symbol
   | Bracket Bracket [Token]
   | BadOpen Bracket [Token]
   | BadClose Bracket
@@ -40,13 +40,16 @@ openers, closers :: [(Token, Bracket)]
 openers = [(Sym "(", Round),(Sym "[", Square),(Sym "{", Curly)]
 closers = [(Sym ")", Round),(Sym "]", Square),(Sym "}", Curly)]
 
+isAlphaNumU :: Char -> Bool
+isAlphaNumU c = c == '_' || isAlphaNum c
+
 raw :: String -> [Token]
 raw "" = []
 raw ('\n' : s) = newline True s
 raw ('\r' : s) = newline False s
 raw (c : s) | elem c " \t" = spaces 1 s
 raw (c : s) | elem c solos = Sym [c] : raw s
-raw (c : s) | isAlphaNum c = alphanum (B0 :< c) s
+raw (c : s) | isAlphaNumU c = alphanum (B0 :< c) s
 raw (c : s) = symbol (B0 :< c) s
 
 solos :: String
@@ -61,7 +64,7 @@ spaces i (c : s) | elem c " \t" = spaces (i + 1) s
 spaces i s = Spc i : raw s
 
 alphanum :: Bwd Char -> String -> [Token]
-alphanum cz (c : s) | isAlphaNum c = alphanum (cz :< c) s
+alphanum cz (c : s) | isAlphaNumU c = alphanum (cz :< c) s
 alphanum cz s | all isDigit cz = Num (read (cz <>> [])) : raw s
               | otherwise = Id (cz <>> []) : raw s
 
