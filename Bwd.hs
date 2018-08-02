@@ -23,6 +23,10 @@ instance HalfZip Bwd where
   halfZip B0 B0 = Just B0
   halfZip (xz :< x) (yz :< y) = (:<) <$> halfZip xz yz <*> Just (x, y)
 
+instance Monoid (Bwd x) where
+  mempty = B0
+  mappend = (+<)
+
 (<!) :: Bwd x -> Int -> x
 (xz :< x) <! i = if i == 0 then x else xz <! (i - 1)
 

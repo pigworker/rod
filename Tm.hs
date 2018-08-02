@@ -5,18 +5,19 @@ module Tm where
 import Bwd
 import OPE
 
-data Sort = Tm deriving Eq
+newtype Sort = S String deriving (Eq, Ord)
 instance Show Sort where
-  show Tm = "."
+  show (S i) = i
 
-data Kind = Bwd Kind :- Sort deriving (Eq)
+data Kind = Scope :- Sort deriving (Eq)
+type Scope = Bwd Kind
 infix 2 :-
 instance Show Kind where
   show (B0 :- i) = show i
   show (kz :- i) = "[" ++ foldMap show kz ++ "]" ++ show i
 
-tm :: Kind
-tm = B0 :- Tm
+so :: String -> Kind
+so i = B0 :- S i
 (->>) :: Kind -> Kind -> Kind
 s ->> (sz :- i) = B0 :< s +< sz :- i
 infixr 3 ->>
