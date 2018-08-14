@@ -1,0 +1,66 @@
+declare Prop Type
+declare Show(Prop) Goal
+declare Given(Prop) Hypo
+
+declare axiom Rule
+rule Show(P) by axiom when Given(P)
+
+declare and(Prop, Prop) Prop
+
+declare andI Rule
+rule Show(and(A, B)) by andI {
+  Show(A) ;
+  Show(B) }
+
+rule Show(P) from Given(and(A, B)) {
+  Given(A), Given(B), Show(P) }
+
+declare imp(Prop, Prop) Prop
+
+declare impI Rule
+rule Show(imp(A, B)) by impI {
+  Given(A), Show(B) }
+
+declare impE(Prop) Rule
+rule Show(B) by impE(A) {
+  Show(imp(A, B)) ;
+  Show(A) }
+
+rule Show(P) from Given(imp(A, B)) {
+  Show(A) ;
+  Given(B), Show(P) }
+
+declare false Prop
+
+rule Show(P) from Given(false)
+
+declare contradiction Rule
+rule Show(P) by contradiction {
+  Given(imp(P, false)), Show(false) }
+
+declare or(Prop, Prop) Prop
+
+declare orIleft Rule
+rule Show(or(A, B)) by orIleft {
+  Show(A) }
+
+declare orIright Rule
+rule Show(or(A, B)) by orIright {
+  Show(B) }
+
+rule Show(P) from Given(or(A, B)) {
+  Given(A), Show(P) ;
+  Given(B), Show(P) }
+
+solve exmid(P Prop) Show(or(P, imp(P, false)))
+  Show(or(P, imp(P, false))) by contradiction {
+    Given(imp(or(P, imp(P, false)), false)),
+    Show(false) from Given(imp(or(P, imp(P, false)), false)) {
+      Show(or(P, imp(P, false))) by orILeft {
+        Show(P) by contradiction {
+          Given(imp(P, false)),
+          Show(false) from Given(imp(or(P, imp(P, false)), false)) {
+            Show(or(P, imp(P, false))) by orIright {
+              Show(imp(P, false)) by axiom };
+            Given(false), Show(false) by axiom } } };
+      Given(false), Show(false) by axiom } }

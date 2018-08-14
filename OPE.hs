@@ -21,6 +21,10 @@ instance Eq OPE where
 OPE B0 <: True = OPE B0
 OPE bz <: b    = OPE (bz :< b)
 
+popOPE :: OPE -> (OPE, Bool)
+popOPE (OPE (th :< b)) = (OPE th, b)
+popOPE (OPE B0)        = (oi, True)
+
 class Thin t where
   (<<) :: t -> OPE -> t
   (<?) :: OPE -> t -> Maybe t
@@ -50,6 +54,10 @@ instance Thin OPE where
   OPE (th :< True)  <? OPE (ph :< b) = (<: b) <$> (OPE th <? OPE ph)
   OPE (th :< False) <? OPE (ph :< b) = if b then Nothing else OPE th <? OPE ph
 
+instance Thin t => Thin (Bwd t) where
+  tz << th = fmap (<< th) tz
+  th <? tz = traverse (th <?) tz
+
 pullback :: OPE       -- th'
          -> OPE       -- ph'
          -> ( OPE     -- ps
@@ -73,3 +81,6 @@ OPE (th :< b) ?< (xz :< x) = (if b then (:< x) else id) (OPE th ?< xz)
 
 (<|-) :: OPE -> Bwd x -> OPE
 th <|- xz = foldl (const . (<: True)) th xz
+
+(<|^) :: OPE -> Bwd x -> OPE
+th <|^ xz = foldl (const . (<: False)) th xz

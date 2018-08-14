@@ -47,9 +47,9 @@ data Syntax = Syntax
 
 type Grammar = [Production ()]
 
-data Production  n = Spacer :/ Production' n
+data Production  n = Spacer :/ Production0 n
   deriving (Show, Functor, Foldable, Traversable)
-data Production' n = End | Grammaton n :\ Production n
+data Production0 n = End | Grammaton n :\ Production n
   deriving  (Show, Functor, Foldable, Traversable)
 infixr 4 :/
 infixr 4 :\
@@ -57,12 +57,12 @@ infixr 4 :\
 data Spacer = Exactly Int | AtLeast Int | Sp deriving Show
 
 data Grammaton n
-  = GRec n (Bwd Scopex) Sort (Maybe String)
+  = GRec n (Bwd Scopex) Sort Bool
   | GPun String
   | GKey String
   | GBrk Bracket (Production ())
   | GOut (Bwd Scopex)
-  | GBId String
+  | GBId
   | GNum
   | GSym
   | GNam
@@ -78,19 +78,19 @@ type Position =  ( Head
                  )
 type Theseus =  Bwd Position
 
-type MEnv = [(String, SComp)]  -- metalexical environment
+type MEnv = Bwd SComp  -- metalexical environment
 type LEnv = Bwd (String, Kind) -- lexical environment
 data SComp = IdId String | ScId LEnv deriving Show
-data Scopex = Sc String | Va String (Bwd Scopex) Sort deriving Show
+data Scopex = Sc Int | Va Int (Bwd Scopex) Sort deriving Show
 scopex :: MEnv
        -> Scopex              -- scope former
        -> LEnv
-scopex env (Sc x) = case lookup x env of
-  Just (ScId g) -> g
-  _             -> B0
-scopex env (Va x g k) = case lookup x env of
-  Just (IdId y) -> B0 :< (y, fmap snd (foldMap (scopex env) g) :- k)
-  _             -> B0
+scopex env (Sc i) = case env <! i of
+  ScId g -> g
+  _      -> B0
+scopex env (Va i g k) = case env <! i of
+  IdId y -> B0 :< (y, fmap snd (foldMap (scopex env) g) :- k)
+  _      -> B0
 
 instance Monad Parser where
   return x = Parser $ \ _ sta -> [(x, False, sta)]
@@ -127,7 +127,7 @@ spacer sp = Parser $ \ env sta -> case (sp, source sta) of
 production :: Production Theseus -> Parser [(LEnv, PTree)]
 production (sp :/ pr') = spacer sp *> production' pr'
 
-production' :: Production' Theseus -> Parser [(LEnv, PTree)]
+production' :: Production0 Theseus -> Parser [(LEnv, PTree)]
 production' End = pure []
 production' (gr :\ pr) = (++) <$> grammaton gr <*> production pr
 
@@ -137,7 +137,7 @@ grammaton (GPun s)         = [] <$ pTok (guard . (Sym s ==))
 grammaton (GKey s)         = [] <$ pTok (guard . (Id s ==))
 grammaton (GBrk b pr)      = pBracket b (production (fmap (const B0) pr))
 grammaton (GOut ga)        = [] <$ pOutLEnv ga
-grammaton (GBId x)         = pId >>= \ y -> [] <$ pMeta x (IdId y)
+grammaton  GBId            = pId >>= \ y -> [] <$ pMeta (IdId y)
 grammaton  GNum            = (:[]) <$> ((,) B0 <$> (PN <$> pNum))
 grammaton  GSym            =
   (:[]) <$> ((,) B0 <$> (PS <$> pTok (\ t -> case t of {Sym s -> Just s; _ -> Nothing})))
@@ -164,8 +164,8 @@ pNum = Parser $ \ env sta -> case source sta of
     pure (x, True, sta{source = ts})
   _ -> empty
 
-pMeta :: String -> SComp -> Parser ()
-pMeta x m = Parser $ \ env sta -> return ((), False, sta {metEnv = (x, m) : metEnv sta})
+pMeta :: SComp -> Parser ()
+pMeta m = Parser $ \ env sta -> return ((), False, sta {metEnv = metEnv sta :< m})
 
 pOutLEnv :: Bwd Scopex -> Parser ()
 pOutLEnv ga = Parser $ \ env sta ->
@@ -208,7 +208,7 @@ pSpc = pTok $ \ t -> case t of {Spc i -> Just i; _ -> Nothing}
 pOpSpc :: Parser ()
 pOpSpc = (() <$ pSpc) <|> pure ()
 
-pNonTerm :: Theseus -> Sort -> Maybe String -> Parser PTree
+pNonTerm :: Theseus -> Sort -> Bool -> Parser PTree
 pNonTerm th s m
   =    pBracket Round (pNonTerm B0 s m)
   <|>  pRec th s m
@@ -231,12 +231,12 @@ pVar s = pId >>= \ x -> pBound x >>= \ r -> case r of
   where
     go (B0 :< k) = (B0 :<) <$ pOpSpc <*> ki k <* pOpSpc
     go (kz :< k) = (:<) <$> go kz <* pOpSpc <* pSym "," <* pOpSpc <*> ki k <* pOpSpc
-    ki (B0 :- s) = (,) B0 <$> pNonTerm B0 s Nothing
-    ki (kz :- s) = bi kz >>= \ de -> pSym "." *> pOpSpc *> pLEnv de (pNonTerm B0 s Nothing)
+    ki (B0 :- s) = (,) B0 <$> pNonTerm B0 s False
+    ki (kz :- s) = bi kz >>= \ de -> pSym "." *> pOpSpc *> pLEnv de (pNonTerm B0 s False)
     bi B0        = B0 <$ pOpSpc
     bi (kz :< k) = (:<) <$> bi kz <*> ((,) <$> pId <* pOpSpc <*> pure k)
 
-pRec :: Theseus -> Sort -> Maybe String -> Parser PTree
+pRec :: Theseus -> Sort -> Bool -> Parser PTree
 pRec th s m = Parser $ \ env sta -> do
   cutOff (leftRec env) s (source sta)
   case findArr s (grammars (syntax env)) of
@@ -253,8 +253,8 @@ pRec th s m = Parser $ \ env sta -> do
                 (env{leftRec = leftRec env :< s})
                 (sta{outLEnv = B0})
               let me' = let ol' = outLEnv sta in case m of
-                              Nothing -> me
-                              Just x  -> (x, ScId ol') : me
+                              False -> me
+                              True  -> me :< ScId ol'
               return ((s, j) ::: ts, b, sta{outLEnv = ol, metEnv = me'})
       in  foldMap go (zip [0..] ps)
 
@@ -268,11 +268,147 @@ cutOff (rz :< r) x ts
 
 parse :: Syntax -> Sort -> [Token] -> [PTree]
 parse sy s ts = do
-  (t, _, sta) <- parser (pNonTerm B0 s Nothing)
+  (t, _, sta) <- parser (pNonTerm B0 s False)
     (ParEnv {syntax = sy, boundVars = B0, leftRec = B0})
-    (ParSta {metEnv = [], source = ts, outLEnv = B0})
+    (ParSta {metEnv = B0, source = ts, outLEnv = B0})
   guard (null (source sta))
   return t
+
+grG = Syntax
+  { grammars = fold
+    [ single (S "Spacer",
+      [ Sp :/ GPun "<" :\ Exactly 0 :/ GNum :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
+      , Sp :/ GPun "<" :\ Exactly 0 :/ GNum :\ Exactly 0 :/ GPun "+>" :\ Sp :/ End
+      , Sp :/ End
+      ])
+    , single (S "Production",
+      [ Sp :/ GRec () B0 (S "Spacer") False :\
+        Sp :/ GRec () B0 (S "Production0") True :\
+        Sp :/ GOut (B0 :< Sc 0) :\ Sp :/ End
+      ])
+    , single (S "Production0",
+      [ Sp :/ GRec () B0 (S "Grammaton") True :\
+        Sp :/ GRec () (B0 :< Sc 0) (S "Production") True :\
+        Sp :/ GOut (B0 :< Sc 1 :< Sc 0) :\ Sp :/ End
+      , Sp :/ End
+      ])
+    , single (S "Grammaton",
+      [ Sp :/ GPun "<" :\ Exactly 0 :/ GRec () B0 (S "Scope") False :\
+        Exactly 0 :/ GNam :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
+      , Sp :/ GPun "<" :\ Exactly 0 :/ GRec () B0 (S "Scope") False :\
+        Exactly 0 :/ GNam :\ Exactly 0 :/ GPun "|" :\
+        Exactly 0 :/ GBId :\ Exactly 0 :/ GPun ">" :\
+        Sp :/ GOut (B0 :< Va 0 B0 (S "ScId")) :\ Sp :/ End
+      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "Id" :\ Exactly 0 :/ GPun "|" :\
+        Exactly 0 :/ GBId :\ Exactly 0 :/ GPun ">" :\
+        Sp :/ GOut (B0 :< Va 0 B0 (S "IdId")) :\ Sp :/ End
+      , Sp :/ GBrk Round (Sp :/ GRec () B0 (S "Production") True :\ Sp :/ End) :\
+        Sp :/ GOut (B0 :< Sc 0) :\ Sp :/ End
+      , Sp :/ GBrk Square (Sp :/ GRec () B0 (S "Production") True :\ Sp :/ End) :\
+        Sp :/ GOut (B0 :< Sc 0) :\ Sp :/ End
+      , Sp :/ GBrk Curly (Sp :/ GRec () B0 (S "Production") True :\ Sp :/ End) :\
+        Sp :/ GOut (B0 :< Sc 0) :\ Sp :/ End
+      , Sp :/ GSym :\ AtLeast 1 :/ End
+      , Sp :/ GNam :\ Sp :/ End
+      , Sp :/ GPun "<|" :\ Exactly 0 :/ GRec () B0 (S "Scope") False :\
+        Exactly 0 :/ GPun ">" :\ Sp :/ End
+      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "Num" :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
+      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "Sym" :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
+      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "Id" :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
+      ])
+    , single (S "Scope",
+      [ Exactly 0 :/ GBrk Round (Sp :/ GRec () B0 (S "Scopexz") False :\
+                                 Sp :/ GRec () B0 (S "Scopex") False :\ Sp :/ End) :\
+        Exactly 0 :/ End
+      , Exactly 0 :/ End
+      ])
+    , single (S "Scopex",
+      [ Sp :/ GRec () B0 (S "ScId") False :\ Sp :/ End
+      , Sp :/ GRec () B0 (S "IdId") False :\ Sp :/ GRec () B0 (S "Kind") False :\ Sp :/ End
+      ])
+    , single (S "Scopexz",
+      [ Sp :/ GRec () B0 (S "Scopexz") False :\
+        Sp :/ GRec () B0 (S "Scopex") False :\ Sp :/ GPun "," :\ Sp :/ End
+      , Sp :/ End
+      ])
+    , single (S "Kind",
+      [ Sp :/ GRec () B0 (S "Scope") False :\ Exactly 0 :/ GNam :\ Sp :/ End
+      ])
+    , single (S "IdId", [])
+    , single (S "ScId", [])
+    ]
+  , keywords = foldMap (single . flip (,) ()) ["Id", "Num", "Sym"]
+  , excluded = \ _ _ -> False
+  }
+
+mkSpacer :: PTree -> Maybe Spacer
+mkSpacer ((S "Spacer", 0) ::: [(_, PN n)]) = pure (Exactly n)
+mkSpacer ((S "Spacer", 1) ::: [(_, PN n)]) = pure (AtLeast n)
+mkSpacer ((S "Spacer", 2) ::: []) = pure Sp
+mkSpacer _ = Nothing
+
+mkProduction :: PTree -> Maybe (Production ())
+mkProduction ((S "Production", 0) ::: [(_, sp), (_, pr')]) =
+  (:/) <$> mkSpacer sp <*> mkProduction0 pr'
+mkProduction _ = Nothing
+
+mkProduction0 :: PTree -> Maybe (Production0 ())
+mkProduction0 ((S "Production0", 0) ::: [(_, gr), (_, pr)]) =
+  (:\) <$> mkGrammaton gr <*> mkProduction pr
+mkProduction0 ((S "Production0", 1) ::: []) = pure End
+mkProduction0 _ = Nothing
+
+mkGrammaton :: PTree -> Maybe (Grammaton ())
+mkGrammaton ((S "Grammaton", 0) ::: [(_, sc), (_, nom)]) =
+  GRec () <$> mkScope sc <*> mkSort nom <*> pure False
+mkGrammaton ((S "Grammaton", 1) ::: [(_, sc), (_, nom)]) =
+  GRec () <$> mkScope sc <*> mkSort nom <*> pure True
+mkGrammaton ((S "Grammaton", 2) ::: _) =
+  pure GBId
+mkGrammaton ((S "Grammaton", 3) ::: [(_, pr)]) =
+  GBrk Round <$> mkProduction pr
+mkGrammaton ((S "Grammaton", 4) ::: [(_, pr)]) =
+  GBrk Square <$> mkProduction pr
+mkGrammaton ((S "Grammaton", 5) ::: [(_, pr)]) =
+  GBrk Curly <$> mkProduction pr
+mkGrammaton ((S "Grammaton", 6) ::: [(_, PS s)]) =
+  pure (GPun s)
+mkGrammaton ((S "Grammaton", 7) ::: [(_, PK s)]) =
+  pure (GKey s)
+mkGrammaton ((S "Grammaton", 8) ::: [(_, sc)]) =
+  GOut <$> mkScope sc
+mkGrammaton ((S "Grammaton", 9) ::: _) =
+  pure GNum
+mkGrammaton ((S "Grammaton", 10) ::: _) =
+  pure GSym
+mkGrammaton ((S "Grammaton", 11) ::: _) =
+  pure GNam
+mkGrammaton _ = Nothing
+
+mkScope :: PTree -> Maybe (Bwd Scopex)
+mkScope ((S "Scope", 0) ::: [(_, sxz), (_, sx)]) =
+  (:<) <$> mkScopexz sxz <*> mkScopex sx
+mkScope ((S "Scope", 1) ::: _) =
+  pure B0
+mkScope _ = Nothing
+
+mkScopexz :: PTree -> Maybe (Bwd Scopex)
+mkScopexz ((S "Scopexz", 0) ::: [(_, sxz), (_, sx)]) =
+  (:<) <$> mkScopexz sxz <*> mkScopex sx
+mkScopexz ((S "Scopexz", 1) ::: _) =
+  pure B0
+mkScopexz _ = Nothing
+
+mkScopex :: PTree -> Maybe Scopex
+mkScopex ((S "Scopex", 0) ::: [(_, PV i _)]) =
+  pure (Sc i)
+mkScopex ((S "Scopex", 1) ::: [(_, PV i _), (_, (S "Kind", 0) ::: [(_, sc), (_, s)])]) =
+  Va i <$> mkScope sc <*> mkSort s
+mkScopex _ = Nothing
+
+mkSort :: PTree -> Maybe Sort
+mkSort (PK s) = Just (S s)
+mkSort _ = Nothing
 
 -----------
 {-
@@ -290,9 +426,9 @@ myGs = Syntax
 laG :: Syntax
 laG = Syntax
   { grammars = single (S "term",
-      [ Sp :/ GRec () B0 (S "term") Nothing :\ Sp :/ GRec () B0 (S "term") Nothing :\ Sp :/ End
-      , Sp :/ GPun "\\" :\ Sp :/ GBId "x" :\ Sp :/ GPun "->" :\ Sp :/
-              GRec () (B0 :< Va "x" B0 (S "term")) (S "term") Nothing :\ Sp :/ End
+      [ Sp :/ GRec () B0 (S "term") False :\ Sp :/ GRec () B0 (S "term") False :\ Sp :/ End
+      , Sp :/ GPun "\\" :\ Sp :/ GBId :\ Sp :/ GPun "->" :\ Sp :/
+              GRec () (B0 :< Va 0 B0 (S "term")) (S "term") False :\ Sp :/ End
       ])
   , keywords = mempty
   , excluded = ex
@@ -302,70 +438,3 @@ laG = Syntax
     ex (_ :< ((S "term", 0), 0) :< ((S "term", 0), 1)) (S "term", 1) = True
        -- lambdas in args in funs must be bracketed
     ex _ _ = False
-
-grG = Syntax
-  { grammars = fold
-    [ single (S "spacer",
-      [ Sp :/ GPun "<" :\ Exactly 0 :/ GNum :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
-      , Sp :/ GPun "<" :\ Exactly 0 :/ GNum :\ Exactly 0 :/ GPun "+>" :\ Sp :/ End
-      , Sp :/ End
-      ])
-    , single (S "production",
-      [ Sp :/ GRec () B0 (S "spacer") Nothing :\
-        Sp :/ GRec () B0 (S "production0") (Just "x") :\
-        Sp :/ GOut (B0 :< Sc "x") :\ Sp :/ End
-      ])
-    , single (S "production0",
-      [ Sp :/ GRec () B0 (S "grammaton") (Just "a") :\
-        Sp :/ GRec () (B0 :< Sc "a") (S "production") (Just "b") :\
-        Sp :/ GOut (B0 :< Sc "a" :< Sc "b") :\ Sp :/ End
-      , Sp :/ End
-      ])
-    , single (S "grammaton",
-      [ Sp :/ GPun "<" :\ Exactly 0 :/ GRec () B0 (S "scope") Nothing :\
-        Exactly 0 :/ GNam :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
-      , Sp :/ GPun "<" :\ Exactly 0 :/ GRec () B0 (S "scope") Nothing :\
-        Exactly 0 :/ GNam :\ Exactly 0 :/ GPun "|" :\
-        Exactly 0 :/ GBId "g" :\ Exactly 0 :/ GPun ">" :\
-        Sp :/ GOut (B0 :< Va "g" B0 (S "scid")) :\ Sp :/ End
-      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "id" :\ Exactly 0 :/ GPun "|" :\
-        Exactly 0 :/ GBId "x" :\ Exactly 0 :/ GPun ">" :\
-        Sp :/ GOut (B0 :< Va "x" B0 (S "idid")) :\ Sp :/ End
-      , Sp :/ GBrk Round (Sp :/ GRec () B0 (S "production") (Just "a") :\ Sp :/ End) :\
-        Sp :/ GOut (B0 :< Sc "a") :\ Sp :/ End
-      , Sp :/ GBrk Square (Sp :/ GRec () B0 (S "production") (Just "a") :\ Sp :/ End) :\
-        Sp :/ GOut (B0 :< Sc "a") :\ Sp :/ End
-      , Sp :/ GBrk Curly (Sp :/ GRec () B0 (S "production") (Just "a") :\ Sp :/ End) :\
-        Sp :/ GOut (B0 :< Sc "a") :\ Sp :/ End
-      , Sp :/ GSym :\ AtLeast 1 :/ End
-      , Sp :/ GNam :\ Sp :/ End
-      , Sp :/ GPun "<|" :\ Exactly 0 :/ GRec () B0 (S "scope") Nothing :\
-        Exactly 0 :/ GPun ">" :\ Sp :/ End
-      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "num" :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
-      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "sym" :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
-      , Sp :/ GPun "<" :\ Exactly 0 :/ GKey "id" :\ Exactly 0 :/ GPun ">" :\ Sp :/ End
-      ])
-    , single (S "scope",
-      [ Exactly 0 :/ GBrk Round (Sp :/ GRec () B0 (S "scopexz") Nothing :\
-                                 Sp :/ GRec () B0 (S "scopex") Nothing :\ Sp :/ End) :\
-        Exactly 0 :/ End
-      , Exactly 0 :/ End
-      ])
-    , single (S "scopex",
-      [ Sp :/ GRec () B0 (S "scid") Nothing :\ Sp :/ End
-      , Sp :/ GRec () B0 (S "idid") Nothing :\ Sp :/ GRec () B0 (S "kind") Nothing :\ Sp :/ End
-      ])
-    , single (S "scopexz",
-      [ Sp :/ GRec () B0 (S "scopexz") Nothing :\
-        Sp :/ GRec () B0 (S "scopex") Nothing :\ Sp :/ GPun "," :\ Sp :/ End
-      , Sp :/ End
-      ])
-    , single (S "kind",
-      [ Sp :/ GRec () B0 (S "scope") Nothing :\ Exactly 0 :/ GNam :\ Sp :/ End
-      ])
-    , single (S "idid", [])
-    , single (S "scid", [])
-    ]
-  , keywords = foldMap (single . flip (,) ()) ["id", "num", "sym"]
-  , excluded = \ _ _ -> False
-  }

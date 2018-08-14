@@ -6,12 +6,14 @@ import Data.Char
 
 import Bwd
 
+lexFile :: String -> [[Token]]
+lexFile = fmap tokens . dentLines
+
 tokens :: String -> [Token]
 tokens = findBrackets B0 . raw
 
 data Token
   = Spc Int      -- never two adjacent
-  | Newline
   | Id String    -- never two adjacent
   | Num Int      -- never two adjacent
   | Sym String   -- two adjacent only if at least one is a solo symbol
@@ -22,7 +24,6 @@ data Token
 
 instance Show Token where
   show (Spc n) = replicate n ' '
-  show Newline = "\n"
   show (Id x)  = x
   show (Num n) = show n
   show (Sym s) = s
@@ -43,10 +44,24 @@ closers = [(Sym ")", Round),(Sym "]", Square),(Sym "}", Curly)]
 isAlphaNumU :: Char -> Bool
 isAlphaNumU c = c == '_' || isAlphaNum c
 
+unix :: String -> String
+unix [] = []
+unix ('\r' : '\n' : s) = '\n' : unix s
+unix ('\n' : '\r' : s) = '\n' : unix s
+unix ('\r' : s)        = '\n' : unix s
+unix (c : s)           = c : unix s
+
+dentLines :: String -> [String]
+dentLines = dentify B0 . lines . unix where
+  dentify lz [] = dump lz []
+  dentify lz (l : ls) = case l of
+    c : _ | not (isSpace c) -> dump lz (dentify (B0 :< l) ls)
+    _ -> dentify (lz :< l) ls
+  dump B0 ls = ls
+  dump lz ls = concat lz : ls
+
 raw :: String -> [Token]
 raw "" = []
-raw ('\n' : s) = newline True s
-raw ('\r' : s) = newline False s
 raw (c : s) | elem c " \t" = spaces 1 s
 raw (c : s) | elem c solos = Sym [c] : raw s
 raw (c : s) | isAlphaNumU c = alphanum (B0 :< c) s
@@ -55,13 +70,7 @@ raw (c : s) = symbol (B0 :< c) s
 solos :: String
 solos = ",;()[]{}"
 
-newline :: Bool -> String -> [Token]
-newline b (c : s) | c == (if b then '\r' else '\n') = newline b s
-newline b s = Newline : raw s
-
 spaces :: Int -> String -> [Token]
-spaces _ ('\n' : s) = newline True s
-spaces _ ('\r' : s) = newline False s
 spaces i (c : s) | elem c " \t" = spaces (i + 1) s
 spaces i s = Spc i : raw s
 

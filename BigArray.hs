@@ -103,3 +103,11 @@ type Set x = Arr x ()
 
 domain :: Ord k => Arr k v -> Set k
 domain = runIdentity . travArr (\ (k, _) -> Identity ())
+
+inSet :: Ord x => x -> Set x -> Bool
+inSet x s = case findArr x s of
+  Just _ -> True
+  _      -> False
+
+singleton :: Ord x => x -> Set x
+singleton = single . flip (,) ()

@@ -1,0 +1,24 @@
+declare Prop Type
+declare Proof Type
+declare Make(Proof, Prop) Goal
+declare Have(Proof, Prop) Hypo
+
+declare axiom(Proof) Rule
+rule Make(x, P) by axiom(x) when Have(x, P)
+
+declare imp(Prop, Prop) Prop
+declare lam((Proof)Proof) Proof
+declare app(Proof, Proof) Proof
+
+declare impI Rule
+rule Make(lam(x. b(x)), imp(A, B)) by impI {
+  (x Proof) Have(x, A[]), Make(b[x], B[]) }
+
+declare impE(Prop) Rule
+rule Make(app(f, a), B) by impE(A) {
+  Make(f, imp(A, B)) ;
+  Make(a, A) }
+
+rule Make(p, P) from Have(f, imp(A, B)) {
+  Make(a, A) ;
+  Have(f a, B), Make(p, P) }

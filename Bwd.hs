@@ -2,6 +2,8 @@
 
 module Bwd where
 
+import Control.Arrow
+
 import HalfZip
 
 data Bwd x = B0 | Bwd x :< x deriving (Show, Eq, Functor, Foldable, Traversable)
@@ -41,4 +43,10 @@ xz <>< (x : xs) = (xz :< x) <>< xs
 (<>>) :: Bwd x -> [x] -> [x]
 B0 <>> xs = xs
 (xz :< x) <>> xs = xz <>> (x : xs)
+
+deBr :: (x -> Bool) -> Bwd x -> Maybe (Int, x)
+deBr p B0 = Nothing
+deBr p (xz :< x)
+  | p x = Just (0, x)
+  | otherwise = ((1 +) *** id) <$> deBr p xz
 
