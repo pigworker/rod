@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleInstances, TypeSynonymInstances, DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances, TypeSynonymInstances, 
+             DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 
 module Tm where
 
@@ -9,104 +10,46 @@ import OPE
 import BigArray
 import HalfZip
 
-{-
-newtype Sort = S String deriving (Eq, Ord)
-instance Show Sort where
-  show (S i) = i
-
-data Kind = Scope :- Sort deriving (Eq)
-type Scope = Bwd Kind
-infix 2 :-
-instance Show Kind where
-  show (B0 :- i) = show i
-  show (kz :- i) = "[" ++ foldMap show kz ++ "]" ++ show i
-
-so :: String -> Kind
-so i = B0 :- S i
-(->>) :: Kind -> Kind -> Kind
-s ->> (sz :- i) = B0 :< s +< sz :- i
-infixr 3 ->>
-
-data Bi x = Bwd String :. x deriving (Eq, Functor)
-infix 1 :.
-
-
-data Tm
-  = Hd :$ Bwd (Bi Tm)
-  | Meta :? OPE
-  deriving Eq
-infix 2 :$
-infix 2 :?
-
-data Hd = C String Kind | V Int deriving (Show, Eq)
-
-type Meta = String
-
-instance Thin Tm where
-  (h@(C _ _) :$ tz) << th = h :$ (tz << th)
-  (V i       :$ tz) << th = V (i << th) :$ (tz << th)
-  (m :? ph)         << th = m :? (th << ph)
-  th <? (h@(C _ _) :$ tz) = (h :$) <$> (th <? tz)
-  th <? (V i :$ tz)       = (:$) <$> (V <$> (th <? i)) <*> (th <? tz)
-  th <? (m :? ph)         = (m :?) <$> (th <? ph)
-
-instance Thin t => Thin (Bi t) where
-  (xz :. t) << th = xz :. (t << (th <|- xz))
-  th <? (xz :. t) = (xz :.) <$> ((th <|- xz) <? t)
-
-instance Thin t => Thin (Bwd t) where
-  tz << th = fmap (<< th) tz
-  th <? tz = traverse (th <?) tz
-
-instance Show Tm where
-  show t = go B0 t where
-    go nz (C c _ :$ tz) = c ++ bwdBr "(" (fmap (bi nz) tz) ")"
-    go nz (V i :$ tz)   = (nz <! i) ++ bwdBr "(" (fmap (bi nz) tz) ")"
-    go nz (m :? th)     = m ++ bwdBr "[" (sel 0 th nz) "]"
-    bi nz (xz :. t) = foldMap (++ ".") yz ++ go mz t where
-      (mz, yz) = freshen nz xz
-    sel i (OPE B0) nz = nz
-    sel i th B0 = sel (i + 1) th (B0 :< show i)
-    sel i (OPE (th :< b)) (nz :< n) = (if b then (:< n) else id) (sel i (OPE th) nz)
-
-freshen :: Bwd String    -- nz distinct
-        -> Bwd String    -- xz any old names
-        -> ( Bwd String  -- nz +< yz distinct
-           , Bwd String  -- yz the same length as xz
-           )
-freshen nz B0 = (nz, B0)
-freshen nz (xz :< x) = (mz :< y, yz :< y) where
-  (mz, yz) = freshen nz xz
-  x' = (if null x then "_" else x)
-  y = if any (x' ==) mz then next 0 else x'
-  next i = if any (z ==) mz then next (i + 1) else z where
-    z = x' ++ show i
-
-
-metaDep :: Meta -> Tm -> Bool
-metaDep m (n :? _)  = m == n
-metaDep m (h :$ tz) = any (\ (_ :. t) -> metaDep m t) tz
--}
-
-data Sort = P Prim
-          | T Tm deriving (Show, Eq)
+data Sort
+  = P Prim
+  | T TM deriving (Show, Eq)
 data Prim = Type | Goal | Hypo | Rule deriving (Show, Eq)
+
 data Kind = Cx :- Sort deriving (Show, Eq)
+type Signature = Arr String Kind
+
 data Cx = C0 | Cx :& (String, Kind) deriving Show
-data Tm = Hd :$ Bwd (Bi Tm)
-        | Meta :? OPE
-        deriving Show
-data Bi x = Bwd String :. x deriving (Show, Functor)
-data Hd = C String | V Int | M Meta deriving (Show, Eq)
-newtype Meta = Meta Int deriving (Eq, Ord)
-instance Show Meta where
-  show (Meta i) = "?" ++ show i
+
+data Tm k
+  = Hd k :$ Bwd (Bi (Tm k))
+  | Meta k :? OPE
+  deriving (Show, Functor, Foldable, Traversable)
+type TM = Tm Kind
+
+data Bi x = Bwd String :. x
+  deriving (Show, Functor, Foldable, Traversable)
+
+data Hd k = C String | V Int | M (Meta k)
+  deriving (Show, Eq, Functor, Foldable, Traversable)
+
+newtype Meta k = Meta (Int, k)
+  deriving (Functor, Foldable, Traversable)
+type META = Meta Kind
+instance Show (Meta k) where
+  show (Meta (i, _)) = "?" ++ show i
+instance Eq (Meta k) where
+  Meta (i, _) == Meta (j, _) = i == j
+instance Ord (Meta k) where
+  compare (Meta (i, _)) (Meta (j, _)) = compare i j
 
 infix 1 :.
 infix 2 :$
 infix 2 :?
 
-instance Eq Tm where
+metaK :: Meta Kind -> Kind
+metaK (Meta (_, k)) = k
+
+instance Eq (Tm k) where
   (f :$ az) == (g :$ bz) = f == g && az == bz
   (m :? th) == (n :? ph) = m == n && th == ph
   _ == _ = False
@@ -154,13 +97,13 @@ instance Thin Cx where
   th <? (ga :& (x, k)) =
     (:&) <$> (th <? ga) <*> ((,) x <$> ((th <& ga) <? k))
 
-instance Thin Tm where
+instance Thin (Tm k) where
   (h :$ tz) << th = (h << th) :$ (tz << th)
   (m :? ph) << th = m :? (ph << th)
   th <? (h :$ tz) = (:$) <$> (th <? h) <*> (th <? tz)
   th <? (m :? ph) = (m :?) <$> (th <? ph)
 
-instance Thin Hd where
+instance Thin (Hd k) where
   C c << th = C c
   V i << th = V (i << th)
   M m << th = M m
@@ -183,7 +126,7 @@ data Morph = Morph
   { passive      :: OPE
   , active       :: OPE -- passive and active must cover
   , thinning     :: OPE
-  , substitution :: Bwd (Bi Tm)
+  , substitution :: Bwd (Bi TM)
   }
 
 wkMorph :: Morph -> Bwd x -> Morph
@@ -199,7 +142,7 @@ wkMorph (Morph
   , substitution = fmap (<< (oi <|^ de)) su
   }
 
-spim :: Bwd (Bi Tm) -> Morph
+spim :: Bwd (Bi TM) -> Morph
 spim bz = Morph
   { passive      = oi <|^ bz
   , active       = oi <|- bz
@@ -208,24 +151,22 @@ spim bz = Morph
   }
 
 class Morphic t where
-  morph :: Arr Meta Kind -> Morph -> t -> t
+  morph :: Morph -> t -> t
 
-instance Morphic Tm where
-  morph mka m (V i :$ az) = case (passive m <? i, active m <? i) of
+instance Morphic TM where
+  morph m (V i :$ az) = case (passive m <? i, active m <? i) of
       (Just i, _) -> V (i << thinning m) :$ az'
       (_, Just j) ->
         let xz :. t = substitution m <! j
-        in  morph mka (spim az') t
-    where az' = morph mka m az
-  morph mka m (h :$ az) = h :$ morph mka m az
-  morph mka m (x :? th) = case passive m <? th of
+        in  morph (spim az') t
+    where az' = morph m az
+  morph m (h :$ az) = h :$ morph m az
+  morph m (x :? th) = case passive m <? th of
     Just ph -> x :? (ph << thinning m)
-    Nothing -> case findArr x mka of
-      Nothing -> error "unkind metavar"
-      Just (de :- t) -> M x :$ mkSpine de th m
+    Nothing -> let (de :- t) = metaK x in M x :$ mkSpine de th m
 
 -- pullbacks instead?
-popMorph :: Morph -> (Morph, Either Int (Bi Tm))
+popMorph :: Morph -> (Morph, Either Int (Bi TM))
 popMorph (Morph {passive = pa, active = ac, thinning = th, substitution = sz}) =
   case (popOPE pa, popOPE ac) of
     ((pa, True), (ac, _)) -> (Morph
@@ -241,7 +182,7 @@ popMorph (Morph {passive = pa, active = ac, thinning = th, substitution = sz}) =
       , substitution = sz
       }, Right s)
 
-mkSpine :: Cx -> OPE -> Morph -> Bwd (Bi Tm)
+mkSpine :: Cx -> OPE -> Morph -> Bwd (Bi TM)
 mkSpine C0 _ _ = B0
 mkSpine ga'@(ga :& (_, k)) th m = case (popOPE th, popMorph m) of
   ((th, False), (m, _)) -> mkSpine ga' th m
@@ -249,35 +190,44 @@ mkSpine ga'@(ga :& (_, k)) th m = case (popOPE th, popMorph m) of
     Right b -> b
     Left  i -> eta k i
 
-eta :: Kind -> Int -> Bi Tm
+eta :: Kind -> Int -> Bi TM
 eta (de :- _) i = xz :. (V (i << (oi <|^ xz)) :$ etaSpine 0 de) where
   xz = cxDom de
   etaSpine i C0 = B0
   etaSpine i (ga :& (_, k)) = etaSpine (i + 1) ga :< eta k i
 
 instance Morphic t => Morphic (Bwd t) where
-  morph mka m tz = fmap (morph mka m) tz
+  morph m tz = fmap (morph m) tz
 
 instance Morphic t => Morphic (Bi t) where
-  morph mka m (xz :. t) = xz :. morph mka (wkMorph m xz) t
+  morph m (xz :. t) = xz :. morph (wkMorph m xz) t
 
-cxMorph :: Arr Meta Kind -> Morph -> Cx -> (Cx, Morph)
-cxMorph mka m C0             = (C0, m)
-cxMorph mka m (ga :& (x, k)) = (ga' :& (x, morph mka m' k), wkMorph m (B0 :< ()))
-  where (ga', m') = cxMorph mka m ga
+cxMorph :: Morph -> Cx -> (Cx, Morph)
+cxMorph m C0             = (C0, m)
+cxMorph m (ga :& (x, k)) = (ga' :& (x, morph m' k), wkMorph m (B0 :< ()))
+  where (ga', m') = cxMorph m ga
 
 instance Morphic Cx where
-  morph mka m ga = fst (cxMorph mka m ga)
+  morph m ga = fst (cxMorph m ga)
 
 instance Morphic Kind where
-  morph mka m (ga :- i) = ga' :- morph mka m' i where (ga', m') = cxMorph mka m ga
+  morph m (ga :- i) = ga' :- morph m' i where (ga', m') = cxMorph m ga
 
 instance Morphic Sort where
-  morph mka m (T t) = T (morph mka m t)
-  morph mka m i     = i
+  morph m (T t) = T (morph m t)
+  morph m i     = i
 
 cxKi :: Cx -> Int -> Kind
 cxKi ga x = k << th where
   (k, th) = go ga x
   go (_ :& (_, k)) 0 = (k, oi <: False)
   go (ga :& _)     x = (k, th <: False) where (k, th) = go ga (x -1)
+
+thCx :: OPE -> Cx -> Maybe Cx
+thCx (OPE B0) ga' = pure ga'
+thCx (OPE (bz :< True)) (ga' :& (x, k')) =
+  (:&) <$> thCx (OPE bz) ga' <*> ((,) x <$> OPE bz <? k')
+thCx (OPE (bz :< False)) (ga' :& _) = thCx (OPE bz) ga'
+
+synKi :: OPE -> Kind -> Maybe Kind
+synKi th (ga' :- i') = (:-) <$> thCx th ga' <*> (th <? i') where

@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternGuards #-}
+
 module Chk where
 
 import Data.Maybe
@@ -87,13 +89,6 @@ instance Functor Chk where
 chkU :: Cx -> Chk x -> Chk x
 chkU de c = Chk $ \ rod mka ga ->
   chk c rod mka (cxCat ga de)
-
-synKi :: Cx -> OPE -> Sort -> Maybe Kind
-synKi ga' th@(OPE bz) i' = (:-) <$> thCx bz ga' <*> (th <? i') where
-  thCx B0 ga' = pure ga'
-  thCx  (bz :< True)(ga' :& (x, k')) =
-    (:&) <$> thCx bz ga' <*> ((,) x <$> OPE bz <? k')
-  thCx (bz :< False) (ga' :& _) = thCx bz ga'
 
 chkH :: Hd -> Chk (Either Meta Kind)
 chkH h = Chk $ \ rod mka ga -> case h of
@@ -205,3 +200,124 @@ bindChk :: Kind -> Bi Tm -> Chk ()
 bindChk (de :- i) (xz :. t) = case cxEx de xz of
   Nothing -> fail ""
   Just de -> chkU de (sortChk i t)
+
+data Constraint
+  = HetHet (Cx, Sort, Tm) (Cx, Sort, Tm)
+  | HomHet Cx (Sort, Tm) (Sort, Tm)
+  | Hom Cx Sort Tm Tm
+  deriving Show
+
+constraint :: (Cx, Sort, Tm) -> (Cx, Sort, Tm) -> Constraint
+constraint (ga0, s0, t0) (ga1, s1, t1)
+  | ga0 == ga1 = if s0 == s1 then Hom ga0 s0 t0 t1
+                             else HomHet ga0 (s0, t0) (s1, t1)
+constraint l r = HetHet l r
+
+lhs, rhs :: Constraint -> (Cx, Sort, Tm) 
+lhs (HetHet l _)          = l
+lhs (HomHet ga (s, t) _)  = (ga, s, t)
+lhs (Hom ga s t _)        = (ga, s, t)
+rhs (HetHet _ r)          = r
+rhs (HomHet ga _ (s, t))  = (ga, s, t)
+rhs (Hom ga s _ t)        = (ga, s, t)
+
+
+
+
+spineCons :: Arr Meta Kind
+          -> (Cx, Cx, Bwd (Bi Tm))
+          -> (Cx, Cx, Bwd (Bi Tm))
+          -> [Constraint] -> Maybe [Constraint]
+spineCons _ (_, C0, B0) (_, C0, B0) cs = return cs
+spineCons mka
+  (ga0, de0 :& (_, k0), bz0 :< (xz0 :. t0))
+  (ga1, de1 :& (_, k1), bz1 :< (xz1 :. t1))
+  cs =
+  spineCons mka (ga0, de0, bz0) (ga1, de1, bz1)
+    (constraint (cxCat ga0 xi0, s0, t0) (cxCat ga1 xi1, s1, t1) : cs) where
+    xi0 :- s0 = morph mka (spim bz0) k0
+    xi1 :- s1 = morph mka (spim bz1) k1
+spineCons _ _ _ _ = Nothing
+
+solve :: RodSta -> Arr Meta Kind -> Constraint ->
+         Maybe (Arr Meta (Bi Tm), [Constraint])
+solve rod mka (Hom _ _ t0 t1) | t0 == t1 = return (emptyArr, [])
+solve rod mka (HomHet _ (_, t0) (_, t1)) | t0 == t1 = return (emptyArr, [])
+solve rod mka (HetHet (_, _, t0) (_, _, t1)) | t0 == t1 = return (emptyArr, [])
+solve rod mka (Hom ga s (m :? th) t) = trySol rod mka ga s m th t
+solve rod mka (Hom ga s t (m :? th)) = trySol rod mka ga s m th t
+solve rod mka c = case (lhs c, rhs c) of
+  ((ga0, s0, C c0 :$ bz0), (ga1, s1, C c1 :$ bz1)) -> do
+    guard $ c0 == c1
+    (de :- _) <- findArr c0 (rSignature rod)
+    cs <- spineCons mka (ga0, de, bz0) (ga1, de, bz1) []
+    return (emptyArr, cs)
+  ((ga0, s0, V i0 :$ bz0), (ga1, s1, V i1 :$ bz1)) -> do
+    guard $ i0 == i1
+    let de0 :- _ = cxKi ga0 i0
+    let de1 :- _ = cxKi ga1 i1
+    cs <- spineCons mka (ga0, de0, bz0) (ga1, de1, bz1) []
+    return (emptyArr, cs)
+  ((_, _, M _ :$ _), _) -> return (emptyArr, [c])
+  (_, (_, _, M _ :$ _)) -> return (emptyArr, [c])
+  _ -> Nothing
+
+pruSt :: [(Meta, (Kind, OPE))] -> Arr Meta (Bi Tm)
+pruSt = foldr go emptyArr where
+  go (m, (_, th)) = single (m
+
+trySol :: RodSta -> Arr Meta Kind ->
+          Cx -> Sort -> Meta -> OPE -> Tm ->
+          Maybe (Arr Meta (Bi Tm), [Constraint])
+trySol rod mka ga s m th t = case prune mka m th True t of
+  Pruned pr t -> do
+    (de :- _) <- findArr m mka
+    return (insertArr (m, cxDom de :. t) (pruSt pr), [])
+  Occ True    -> fail "fatal dependency"
+  Occ False   -> return (emptyArr, [Hom ga s (m :? th) t])
+
+data Pruning x
+  = Pruned [(Meta, (Kind, OPE))] x
+  | Occ Bool
+  deriving Show
+
+prullback :: [(Meta, (Kind, OPE))] -> [(Meta, (Kind, OPE))] ->
+  Maybe ([(Meta, (Kind, OPE))], [(Meta, (Kind, OPE))], [(Meta, (Kind, OPE))])
+prullback = undefined
+
+class Prune x where
+  prune :: Arr Meta Kind -> Meta -> OPE -> Bool -> x -> Pruning x
+  pruned :: [(Meta, (Kind, OPE))] -> x -> x
+
+instance Prune Tm where
+  prune mka m th r (V i :$ bz) = case th <? i of
+    Nothing -> Occ r
+    Just i -> case prune mka m th r bz of
+      Pruned pr bz -> Pruned pr (V i :$ bz)
+      Occ r -> Occ r
+  pruned pr (h :$ bz) = case h of
+      M m | Just (k, th) <- lookup m pr -> M m :$ (th ?< bz')
+      _ -> h :$ (pruned pr bz')
+    where bz' = pruned pr bz
+  pruned pr (m :? ph) = case lookup m pr of
+    Nothing -> m :? ph
+    Just (_, th) -> m :? (th << ph)
+
+instance Prune t => Prune (Bwd t) where
+  prune mka m th r B0 = Pruned [] B0
+  prune mka m th r (tz :< t) = case prune mka m th r tz of
+    Occ r -> Occ r
+    Pruned pr tz -> case prune mka m th r t of
+      Occ r -> Occ r
+      Pruned qr t -> case prullback pr qr of
+        Nothing -> Occ r
+        Just (rr, pr, qr) -> Pruned rr (pruned pr tz :< pruned qr t)
+  pruned pr bz = fmap (pruned pr) bz
+
+instance Prune t => Prune (Bi t) where
+  prune mka m th r (xz :. t) = case prune mka m (th <|- xz) r t of
+    Pruned pr t -> Pruned pr (xz :. t)
+    Occ r -> Occ r
+  pruned pr (xz :. t) = xz :. pruned (fmap w pr) t where
+    w (m, (k, th)) = (m, (k, th <|^ xz))
+    

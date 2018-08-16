@@ -12,8 +12,6 @@ import Tm
 import BigArray
 import Decl
 
-type Signature = Arr String Kind
-
 newtype Parser x = Parser {parser
   :: ParEnv -> ParSta -> [(x, ParSta)]
   } deriving Monoid
@@ -95,13 +93,13 @@ pKey s = pTok (guard . (Id s ==))
 pEnv :: (ParEnv -> t) -> Parser t
 pEnv f = Parser $ \ env sta -> [(f env, sta)]
 
-pMeta :: String -> Parser Meta
+pMeta :: String -> Parser (Meta ())
 pMeta x = Parser $ \ env sta -> case findArr x (pMetas sta) of
   Just m   -> [(m, sta)]
   Nothing  -> [(m, sta{pMetas = insertArr (x, m) (pMetas sta)
                        ,pNamer = n + 1})] where
     n = pNamer sta
-    m = Meta n
+    m = Meta (n, ())
 
 pId :: Parser String
 pId = do
@@ -208,7 +206,7 @@ pPrim = Type <$ pKey "Type"
     <|> Hypo <$ pKey "Hypo"
     <|> Rule <$ pKey "Rule"
 
-pTm :: Parser Tm
+pTm :: Parser (Tm ())
 pTm = do
   pSpc
   h <- pHd
@@ -240,7 +238,7 @@ pBind p = do
   pSpc
   (de :.) <$> pIn de p
 
-pHd :: Parser Hd
+pHd :: Parser (Hd ())
 pHd = do
   xz <- pEnv pScope
   sig <- pEnv pSignature
